@@ -3,6 +3,16 @@ entries:
   platform-scheduler:
   - apiVersion: v2
     appVersion: 1.0.0
+    created: "2026-06-07T11:12:56.593370851Z"
+    description: Platform services scheduled scale up/down helm chart
+    digest: e474f0bb614e9778a73f0a168b2f7a135646a7067f4189a68e9f91591de97146
+    name: platform-scheduler
+    type: application
+    urls:
+    - https://github.com/kor4ik/platform-scheduler-helm-chart/releases/download/platform-scheduler-1.0.6/platform-scheduler-1.0.6.tgz
+    version: 1.0.6
+  - apiVersion: v2
+    appVersion: 1.0.0
     created: "2026-06-07T10:48:50.218461183Z"
     description: Platform services scheduled scale up/down helm chart
     digest: 3027a3b78a51e744b75bbb09b8f57357d4ef0114143e2f648be9ee59a571c0f8
@@ -21,4 +31,4 @@ entries:
     urls:
     - https://github.com/kor4ik/platform-scheduler-helm-chart/releases/download/platform-scheduler-1.0.4/platform-scheduler-1.0.4.tgz
     version: 1.0.4
-generated: "2026-06-07T10:48:50.218468844Z"
+generated: "2026-06-07T11:12:56.593382048Z"
