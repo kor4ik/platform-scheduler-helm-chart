@@ -1,0 +1,205 @@
+{{- $global := .Values.global }}
+{{- $schedule := .Values.platformSchedule }}
+{{- $depSchedule := .Values.platformSchedule.dependencies | default dict }}
+{{- $appSchedule := .Values.platformSchedule.applications | default dict }}
+{{- $depEnabled := $depSchedule.enabled | default false }}
+{{- $appEnabled := $appSchedule.enabled | default false }}
+{{- $appNamespaces := $appSchedule.namespaces | default list }}
+{{- $ns := .Release.Namespace }}
+{{- $timezone := $schedule.timezone | default "UTC" }}
+{{- $start := $schedule.start }}
+{{- $saName := $global.serviceAccountName }}
+{{- $apps := $depSchedule.apps | default list }}
+{{- $stateCmName := $global.stateConfigMapName }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: platform-scaleup
+  namespace: {{ $ns }}
+spec:
+  schedule: {{ $start | default "0 0 31 2 *" | quote }}
+  suspend: {{ if $start }}false{{ else }}true{{ end }}
+  timeZone: {{ $timezone | quote }}
+  startingDeadlineSeconds: 60
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 60
+      template:
+        spec:
+          serviceAccountName: {{ $saName }}
+          {{- with $global.nodeSelector }}
+          nodeSelector:
+          {{ toYaml . | indent 12 }}
+          {{- end }}
+          restartPolicy: Never
+          containers:
+            - name: startup
+              image: {{ printf "%s:%s" $global.image.repository ($global.image.tag | toString) | quote }}
+              imagePullPolicy: {{ $global.image.pullPolicy | default "IfNotPresent" }}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -e
+                  log() {
+                    local level="$1"
+                    shift
+                    local timestamp
+                    timestamp="$(date '+%Y-%m-%d %H:%M:%S UTC')"
+                    echo "$timestamp $level: $*"
+                  }
+
+                  log "INFO" "Starting platform scaleup"
+
+                  {{- if $depEnabled }}
+                  # === Phase 1: Restore platform dependencies ===
+                  log "INFO" "Restoring platform deployment replica counts"
+                  {{- range $apps }}
+                  for DEPLOY in $(kubectl -n {{ .namespace }} get deploy {{ if .labelSelector }}-l "{{ .labelSelector }}" {{ end }}-o name 2>/dev/null); do
+                    NAME=$(echo "$DEPLOY" | cut -d/ -f2)
+                    REPLICAS=$(kubectl -n {{ $ns }} get configmap {{ $stateCmName }} \
+                      -o jsonpath="{.data['{{ .namespace }}_${NAME}']}" 2>/dev/null)
+                    if [ -n "$REPLICAS" ] && [ "$REPLICAS" != "0" ]; then
+                      kubectl -n {{ .namespace }} scale "$DEPLOY" --replicas="$REPLICAS"
+                      log "INFO" "Scaled $DEPLOY in {{ .namespace }} to $REPLICAS"
+                    else
+                      kubectl -n {{ .namespace }} scale "$DEPLOY" --replicas=1
+                      log "INFO" "Scaled $DEPLOY in {{ .namespace }} to 1 (default)"
+                    fi
+                  done
+                  for STS in $(kubectl -n {{ .namespace }} get statefulset {{ if .labelSelector }}-l "{{ .labelSelector }}" {{ end }}-o name 2>/dev/null); do
+                    NAME=$(echo "$STS" | cut -d/ -f2)
+                    REPLICAS=$(kubectl -n {{ $ns }} get configmap {{ $stateCmName }} \
+                      -o jsonpath="{.data['{{ .namespace }}_${NAME}']}" 2>/dev/null)
+                    if [ -n "$REPLICAS" ] && [ "$REPLICAS" != "0" ]; then
+                      kubectl -n {{ .namespace }} scale "$STS" --replicas="$REPLICAS"
+                      log "INFO" "Scaled $STS in {{ .namespace }} to $REPLICAS"
+                    else
+                      kubectl -n {{ .namespace }} scale "$STS" --replicas=1
+                      log "INFO" "Scaled $STS in {{ .namespace }} to 1 (default)"
+                    fi
+                  done
+                  {{- end }}
+
+                  # === Phase 2: Wait for platform dependencies to become ready ===
+                  log "INFO" "Waiting for platform dependencies to become ready (timeout 300s per resource)"
+                  FAILED=0
+                  {{- range $apps }}
+                  for DEPLOY in $(kubectl -n {{ .namespace }} get deploy {{ if .labelSelector }}-l "{{ .labelSelector }}" {{ end }}-o name 2>/dev/null); do
+                    log "INFO" "Waiting for $DEPLOY in {{ .namespace }}"
+                    if ! kubectl -n {{ .namespace }} rollout status "$DEPLOY" --timeout=300s 2>/dev/null; then
+                      log "ERROR" "$DEPLOY in {{ .namespace }} did not become ready within 300s"
+                      FAILED=$((FAILED + 1))
+                    fi
+                  done
+                  for STS in $(kubectl -n {{ .namespace }} get statefulset {{ if .labelSelector }}-l "{{ .labelSelector }}" {{ end }}-o name 2>/dev/null); do
+                    log "INFO" "Waiting for $STS in {{ .namespace }}"
+                    if ! kubectl -n {{ .namespace }} rollout status "$STS" --timeout=300s 2>/dev/null; then
+                      log "ERROR" "$STS in {{ .namespace }} did not become ready within 300s"
+                      FAILED=$((FAILED + 1))
+                    fi
+                  done
+                  {{- end }}
+
+                  if [ "$FAILED" -gt 0 ]; then
+                    log "ERROR" "Platform dependencies not healthy ($FAILED failure(s)). Aborting application startup."
+                    exit 1
+                  fi
+                  log "INFO" "All platform dependencies are ready."
+
+                  # === Phase 3: Start platform dependency CronJobs after readiness gate ===
+                  log "INFO" "Unsuspending platform dependency CronJobs"
+                  {{- range $apps }}
+                  for CJ in $(kubectl -n {{ .namespace }} get cronjob {{ if .labelSelector }}-l "{{ .labelSelector }}" {{ end }}-o name 2>/dev/null); do
+                    kubectl -n {{ .namespace }} patch "$CJ" -p '{"spec":{"suspend":false}}'
+                    log "INFO" "Unsuspended $CJ in {{ .namespace }}"
+                  done
+                  {{- end }}
+                  {{- else }}
+                  log "INFO" "Dependencies block disabled; skipping dependency workload scaleup"
+                  {{- end }}
+
+                  {{- if $appEnabled }}
+                  {{- range $appNamespaces }}
+                  # === Phase 4: Wait for ArgoCD to reconcile application resources ===
+                  # After platform deps are ready, ArgoCD starts syncing app manifests.
+                  # Wait until deployment count stabilizes (no new deployments for 15s).
+                  log "INFO" "Waiting for application deployments to stabilize in {{ . }}"
+                  PREV_COUNT=0
+                  STABLE_CHECKS=0
+                  WAIT_ELAPSED=0
+                  WAIT_LIMIT=120
+                  while [ "$WAIT_ELAPSED" -lt "$WAIT_LIMIT" ]; do
+                    CURR_COUNT=$(kubectl -n {{ . }} get deploy --no-headers 2>/dev/null | wc -l | tr -d ' ')
+                    if [ "$CURR_COUNT" -eq "$PREV_COUNT" ] && [ "$CURR_COUNT" -gt 0 ]; then
+                      STABLE_CHECKS=$((STABLE_CHECKS + 1))
+                      if [ "$STABLE_CHECKS" -ge 3 ]; then
+                        log "INFO" "Deployment count stable at $CURR_COUNT after ${WAIT_ELAPSED}s"
+                        break
+                      fi
+                    else
+                      STABLE_CHECKS=0
+                      PREV_COUNT=$CURR_COUNT
+                    fi
+                    sleep 5
+                    WAIT_ELAPSED=$((WAIT_ELAPSED + 5))
+                  done
+                  if [ "$WAIT_ELAPSED" -ge "$WAIT_LIMIT" ]; then
+                    log "WARNING" "Timed out waiting for deployments to stabilize (count: $CURR_COUNT). Proceeding anyway."
+                  fi
+
+                  # === Phase 5: Restore application Deployments ===
+                  log "INFO" "Restoring application deployments in {{ . }}"
+                  for DEPLOY in $(kubectl -n {{ . }} get deploy -o name 2>/dev/null); do
+                    NAME=$(echo "$DEPLOY" | cut -d/ -f2)
+                    REPLICAS=$(kubectl -n {{ $ns }} get configmap {{ $stateCmName }} \
+                      -o jsonpath="{.data['{{ . }}_${NAME}']}" 2>/dev/null)
+                    if [ -n "$REPLICAS" ] && [ "$REPLICAS" != "0" ]; then
+                      kubectl -n {{ . }} scale "$DEPLOY" --replicas="$REPLICAS"
+                      log "INFO" "Scaled $DEPLOY in {{ . }} to $REPLICAS"
+                    else
+                      kubectl -n {{ . }} scale "$DEPLOY" --replicas=1
+                      log "INFO" "Scaled $DEPLOY in {{ . }} to 1 (default)"
+                    fi
+                  done
+                  for STS in $(kubectl -n {{ . }} get statefulset -o name 2>/dev/null); do
+                    NAME=$(echo "$STS" | cut -d/ -f2)
+                    REPLICAS=$(kubectl -n {{ $ns }} get configmap {{ $stateCmName }} \
+                      -o jsonpath="{.data['{{ . }}_${NAME}']}" 2>/dev/null)
+                    if [ -n "$REPLICAS" ] && [ "$REPLICAS" != "0" ]; then
+                      kubectl -n {{ . }} scale "$STS" --replicas="$REPLICAS"
+                      log "INFO" "Scaled $STS in {{ . }} to $REPLICAS"
+                    else
+                      kubectl -n {{ . }} scale "$STS" --replicas=1
+                      log "INFO" "Scaled $STS in {{ . }} to 1 (default)"
+                    fi
+                  done
+
+                  # === Phase 6: Unsuspend all CronJobs ===
+                  log "INFO" "Unsuspending all CronJobs in {{ . }}"
+                  for CJ in $(kubectl -n {{ . }} get cronjob -o name 2>/dev/null); do
+                    kubectl -n {{ . }} patch "$CJ" -p '{"spec":{"suspend":false}}'
+                    log "INFO" "Unsuspended $CJ in {{ . }}"
+                  done
+
+                  # === Phase 7: Restore ScaledJobs minReplicaCount and unpause all ===
+                  log "INFO" "Restoring ScaledJobs minReplicaCount and unpausing all in {{ . }}"
+                  for SJ in $(kubectl -n {{ . }} get scaledjob -o name 2>/dev/null); do
+                    NAME=$(echo "$SJ" | cut -d/ -f2)
+                    MIN_REPLICAS=$(kubectl -n {{ $ns }} get configmap {{ $stateCmName }} \
+                      -o jsonpath="{.data['{{ . }}_sjmr_${NAME}']}" 2>/dev/null)
+                    if [ -n "$MIN_REPLICAS" ] && [ "$MIN_REPLICAS" != "0" ]; then
+                      kubectl -n {{ . }} patch "$SJ" --type=merge -p "{\"spec\":{\"minReplicaCount\":${MIN_REPLICAS}}}"
+                      log "INFO" "Restored $SJ in {{ . }} minReplicaCount to $MIN_REPLICAS"
+                    else
+                      log "INFO" "Skipping $SJ in {{ . }} (no saved non-zero minReplicaCount)"
+                    fi
+                    kubectl -n {{ . }} annotate "$SJ" autoscaling.keda.sh/paused="false" --overwrite
+                    log "INFO" "Unpaused $SJ in {{ . }}"
+                  done
+                  {{- end }}
+                  {{- end }}
+
+                  log "INFO" "Platform startup complete. All services restored."

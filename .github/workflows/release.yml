@@ -1,0 +1,24 @@
+name: Release Helm Chart
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run chart releaser
+        uses: helm/chart-releaser-action@v1.7.0
+        with:
+          charts_dir: .
+          skip_existing: true
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

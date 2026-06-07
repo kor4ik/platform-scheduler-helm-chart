@@ -1,0 +1,19 @@
+global:
+  serviceAccountName: platform-scheduler-sa
+  stateConfigMapName: platform-state-cm
+  image:
+    repository: bitnami/kubectl
+    tag: "1.30.13"
+    pullPolicy: IfNotPresent
+
+platformSchedule:
+  enabled: false
+  timezone: ""
+  start: ""
+  end: ""
+  dependencies:
+    enabled: false
+    apps: []
+  applications:
+    enabled: false
+    namespaces: []

@@ -1,0 +1,183 @@
+{{- $global := .Values.global }}
+{{- $schedule := .Values.platformSchedule }}
+{{- $depSchedule := .Values.platformSchedule.dependencies | default dict }}
+{{- $appSchedule := .Values.platformSchedule.applications | default dict }}
+{{- $depEnabled := $depSchedule.enabled | default false }}
+{{- $appEnabled := $appSchedule.enabled | default false }}
+{{- $appNamespaces := $appSchedule.namespaces | default list }}
+{{- $ns := .Release.Namespace }}
+{{- $timezone := $schedule.timezone | default "UTC" }}
+{{- $end := $schedule.end }}
+{{- $saName := $global.serviceAccountName }}
+{{- $apps := $depSchedule.apps | default list }}
+{{- $stateCmName := $global.stateConfigMapName }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: platform-scaledown
+  namespace: {{ $ns }}
+spec:
+  schedule: {{ $end | default "0 0 31 2 *" | quote }}
+  timeZone: {{ $timezone | quote }}
+  startingDeadlineSeconds: 60
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 60
+      template:
+        spec:
+          serviceAccountName: {{ $saName }}
+          {{- with $global.nodeSelector }}
+          nodeSelector:
+          {{ toYaml . | indent 12 }}
+          {{- end }}
+          restartPolicy: Never
+          containers:
+            - name: shutdown
+              image: {{ printf "%s:%s" $global.image.repository ($global.image.tag | toString) | quote }}
+              imagePullPolicy: {{ $global.image.pullPolicy | default "IfNotPresent" }}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -e
+                  log() {
+                    local level="$1"
+                    shift
+                    local timestamp
+                    timestamp="$(date '+%Y-%m-%d %H:%M:%S UTC')"
+                    echo "$timestamp $level: $*"
+                  }
+
+                  log "INFO" "Starting platform scaledown"
+
+                  PATCH_DATA=""
+                  {{- if $appEnabled }}
+                  {{- range $appNamespaces }}
+                  # === Applications first: save replicas, then suspend CJ/SJ ===
+                  log "INFO" "Scaling application deployments in {{ . }} to zero"
+                  for DEPLOY in $(kubectl -n {{ . }} get deploy -o name 2>/dev/null); do
+                    NAME=$(echo "$DEPLOY" | cut -d/ -f2)
+                    REPLICAS=$(kubectl -n {{ . }} get "$DEPLOY" -o jsonpath='{.spec.replicas}')
+                    if [ "$REPLICAS" != "0" ]; then
+                      PATCH_DATA="${PATCH_DATA}\"{{ . }}_${NAME}\":\"${REPLICAS}\","
+                      kubectl -n {{ . }} scale "$DEPLOY" --replicas=0
+                      log "INFO" "Scaled $DEPLOY in {{ . }} from $REPLICAS to 0"
+                    else
+                      log "INFO" "Skipping $DEPLOY in {{ . }} (replicas already 0)"
+                    fi
+                  done
+                  for STS in $(kubectl -n {{ . }} get statefulset -o name 2>/dev/null); do
+                    NAME=$(echo "$STS" | cut -d/ -f2)
+                    REPLICAS=$(kubectl -n {{ . }} get "$STS" -o jsonpath='{.spec.replicas}')
+                    if [ "$REPLICAS" != "0" ]; then
+                      PATCH_DATA="${PATCH_DATA}\"{{ . }}_${NAME}\":\"${REPLICAS}\","
+                      kubectl -n {{ . }} scale "$STS" --replicas=0
+                      log "INFO" "Scaled $STS in {{ . }} from $REPLICAS to 0"
+                    else
+                      log "INFO" "Skipping $STS in {{ . }} (replicas already 0)"
+                    fi
+                  done
+
+                  # === Applications: suspend CronJobs (save current state first) ===
+                  log "INFO" "Suspending CronJobs in {{ . }}"
+                  for CJ in $(kubectl -n {{ . }} get cronjob -o name 2>/dev/null); do
+                    NAME=$(echo "$CJ" | cut -d/ -f2)
+                    SUSPENDED=$(kubectl -n {{ . }} get "$CJ" -o jsonpath='{.spec.suspend}')
+                    if [ "$SUSPENDED" != "true" ]; then
+                      PATCH_DATA="${PATCH_DATA}\"{{ . }}_cj_${NAME}\":\"false\","
+                      kubectl -n {{ . }} patch "$CJ" -p '{"spec":{"suspend":true}}'
+                      log "INFO" "Suspended $CJ in {{ . }}"
+                    else
+                      log "INFO" "Skipping $CJ in {{ . }} (already suspended)"
+                    fi
+                  done
+
+                  # === Applications: patch ScaledJobs minReplicaCount, then pause ===
+                  log "INFO" "Patching minReplicaCount=0 and pausing ScaledJobs in {{ . }}"
+                  for SJ in $(kubectl -n {{ . }} get scaledjob -o name 2>/dev/null); do
+                    NAME=$(echo "$SJ" | cut -d/ -f2)
+                    MIN_REPLICAS=$(kubectl -n {{ . }} get "$SJ" -o jsonpath='{.spec.minReplicaCount}' 2>/dev/null | tr -d '\r[:space:]')
+                    WAS_PAUSED=$(kubectl -n {{ . }} get "$SJ" -o jsonpath='{.metadata.annotations["autoscaling.keda.sh/paused"]}' 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -d '\r[:space:]')
+                    if [ "$MIN_REPLICAS" != "0" ]; then
+                      PATCH_DATA="${PATCH_DATA}\"{{ . }}_sjmr_${NAME}\":\"${MIN_REPLICAS}\","
+                      kubectl -n {{ . }} patch "$SJ" --type=merge -p '{"spec":{"minReplicaCount":0}}'
+                      log "INFO" "Patched $SJ in {{ . }} minReplicaCount from $MIN_REPLICAS to 0"
+                    else
+                      if [ -z "$MIN_REPLICAS" ]; then
+                        log "INFO" "Skipping $SJ in {{ . }} (minReplicaCount is unset; KEDA default is 0)"
+                      else
+                        log "INFO" "Skipping $SJ in {{ . }} (minReplicaCount already 0)"
+                      fi
+                    fi
+                    if [ "$WAS_PAUSED" = "true" ]; then
+                      log "INFO" "Skipping pause for $SJ in {{ . }} (already paused)"
+                    else
+                      PATCH_DATA="${PATCH_DATA}\"{{ . }}_sjp_${NAME}\":\"false\","
+                      kubectl -n {{ . }} annotate "$SJ" autoscaling.keda.sh/paused="true" --overwrite
+                      log "INFO" "Paused $SJ in {{ . }}"
+                    fi
+                  done
+                  {{- end }}
+                  {{- else }}
+                  log "INFO" "Applications block disabled; skipping app workload shutdown"
+                  {{- end }}
+
+                  {{- if $depEnabled }}
+                  # === Dependencies after app CJ/SJ handling ===
+                  log "INFO" "Saving replica counts and scaling platform dependencies to zero"
+                  {{- range $apps }}
+                  for DEPLOY in $(kubectl -n {{ .namespace }} get deploy {{ if .labelSelector }}-l "{{ .labelSelector }}" {{ end }}-o name 2>/dev/null); do
+                    REPLICAS=$(kubectl -n {{ .namespace }} get "$DEPLOY" -o jsonpath='{.spec.replicas}')
+                    if [ -n "$REPLICAS" ] && [ "$REPLICAS" != "0" ]; then
+                      NAME=$(echo "$DEPLOY" | cut -d/ -f2)
+                      PATCH_DATA="${PATCH_DATA}\"{{ .namespace }}_${NAME}\":\"${REPLICAS}\"," 
+                      kubectl -n {{ .namespace }} scale "$DEPLOY" --replicas=0
+                      log "INFO" "Scaled $DEPLOY in {{ .namespace }} from $REPLICAS to 0"
+                    else
+                      log "INFO" "Skipping $DEPLOY in {{ .namespace }} (replicas already 0)"
+                    fi
+                  done
+                  for STS in $(kubectl -n {{ .namespace }} get statefulset {{ if .labelSelector }}-l "{{ .labelSelector }}" {{ end }}-o name 2>/dev/null); do
+                    REPLICAS=$(kubectl -n {{ .namespace }} get "$STS" -o jsonpath='{.spec.replicas}')
+                    if [ -n "$REPLICAS" ] && [ "$REPLICAS" != "0" ]; then
+                      NAME=$(echo "$STS" | cut -d/ -f2)
+                      PATCH_DATA="${PATCH_DATA}\"{{ .namespace }}_${NAME}\":\"${REPLICAS}\"," 
+                      kubectl -n {{ .namespace }} scale "$STS" --replicas=0
+                      log "INFO" "Scaled $STS in {{ .namespace }} from $REPLICAS to 0"
+                    else
+                      log "INFO" "Skipping $STS in {{ .namespace }} (replicas already 0)"
+                    fi
+                  done
+                  for CJ in $(kubectl -n {{ .namespace }} get cronjob {{ if .labelSelector }}-l "{{ .labelSelector }}" {{ end }}-o name 2>/dev/null); do
+                    NAME=$(echo "$CJ" | cut -d/ -f2)
+                    SUSPENDED=$(kubectl -n {{ .namespace }} get "$CJ" -o jsonpath='{.spec.suspend}')
+                    if [ "$SUSPENDED" != "true" ]; then
+                      PATCH_DATA="${PATCH_DATA}\"{{ .namespace }}_cj_${NAME}\":\"false\"," 
+                      kubectl -n {{ .namespace }} patch "$CJ" -p '{"spec":{"suspend":true}}'
+                      log "INFO" "Suspended $CJ in {{ .namespace }}"
+                    else
+                      log "INFO" "Skipping $CJ in {{ .namespace }} (already suspended)"
+                    fi
+                  done
+                  {{- end }}
+                  {{- else }}
+                  log "INFO" "Dependencies block disabled; skipping dependency workload shutdown"
+                  {{- end }}
+
+                  # Merge only non-empty keys into ConfigMap for restore. This avoids
+                  # clearing previously saved state when current run has nothing new.
+                  if [ -n "$PATCH_DATA" ]; then
+                    PATCH_DATA="${PATCH_DATA%,}"
+                    if ! kubectl -n {{ $ns }} get configmap {{ $stateCmName }} >/dev/null 2>&1; then
+                      printf "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ $stateCmName }}\n  namespace: {{ $ns }}\ndata: {}\n" | kubectl apply -f -
+                    fi
+                    kubectl -n {{ $ns }} patch configmap {{ $stateCmName }} --type=merge -p "{\"data\":{${PATCH_DATA}}}"
+                    log "INFO" "Patched ConfigMap {{ $stateCmName }} with updated keys"
+                  else
+                    log "INFO" "No state changes captured; keeping existing ConfigMap data as-is"
+                  fi
+
+                  log "INFO" "Platform shutdown complete. Karpenter will consolidate empty nodes."
+

@@ -1,0 +1,4 @@
+.DS_Store
+*.tgz
+index.yaml
+.cr-release-packages/
