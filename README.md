@@ -31,8 +31,8 @@ helm install platform-scheduler platform-scheduler/platform-scheduler \
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `scheduler.serviceAccountName` | string | `platform-scheduler-sa` | Name of the ServiceAccount created and used by the CronJobs. |
-| `scheduler.image.repository` | string | `bitnami/kubectl` | Image repository for CronJob containers. |
-| `scheduler.image.tag` | string | `1.30.13` | Pinned kubectl image tag. |
+| `scheduler.image.repository` | string | `alpine/k8s` | Image repository for CronJob containers. Any image with `kubectl` available works. |
+| `scheduler.image.tag` | string | `latest` | Image tag. Should match your cluster's Kubernetes version. |
 | `scheduler.image.pullPolicy` | string | `IfNotPresent` | Image pull policy. |
 | `scheduler.nodeSelector` | object | `{}` | Optional node selector for CronJob pods. Omit to use default scheduling. |
 | `platformSchedule.enabled` | bool | `false` | Enables the scheduler CronJobs. |

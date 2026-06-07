@@ -2,7 +2,7 @@ scheduler:
   serviceAccountName: platform-scheduler-sa
   image:
     repository: bitnami/kubectl
-    tag: "1.30.13"
+    tag: "latest"
     pullPolicy: IfNotPresent
 
 platformSchedule:
