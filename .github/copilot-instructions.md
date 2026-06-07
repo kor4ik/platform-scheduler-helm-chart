@@ -15,7 +15,7 @@ platform-scheduler/       # Helm chart root
 .github/
   workflows/release.yml   # Triggers on v* tags → packages chart → publishes to gh-pages
   prompts/git.prompt.md   # Git agent: commit / push / tag / release
-CHANGELOG.md              # Track every chart version change here
+  log/CHANGELOG.md        # Track every chart version change here
 README.md                 # User-facing docs: values table, install, ArgoCD section
 ```
 
@@ -29,12 +29,12 @@ README.md                 # User-facing docs: values table, install, ArgoCD sect
 
 ## Release checklist
 
-See [CHANGELOG.md](../CHANGELOG.md) for recent changes.
+See [CHANGELOG.md](log/CHANGELOG.md) for recent changes.
 
 1. Make code changes.
 2. Bump `version:` in `platform-scheduler/Chart.yaml`.
 3. Update `CHANGELOG.md` with what changed.
-4. `git add -A && git commit -m "..."` 
+4. `git add -A && git commit -m "..."`
 5. `git tag v<version> && git push origin main v<version>`
 6. Confirm the workflow at `https://github.com/kor4ik/platform-scheduler-helm-chart/actions` completes successfully.
 
