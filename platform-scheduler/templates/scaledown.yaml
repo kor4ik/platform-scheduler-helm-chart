@@ -10,7 +10,7 @@
 {{- $end := $schedule.end }}
 {{- $saName := $global.serviceAccountName }}
 {{- $apps := $depSchedule.apps | default list }}
-{{- $stateCmName := $global.stateConfigMapName }}
+{{- $stateCmName := printf "%s-state" .Release.Name }}
 ---
 apiVersion: batch/v1
 kind: CronJob

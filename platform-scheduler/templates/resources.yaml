@@ -1,6 +1,6 @@
 {{- $ns := .Release.Namespace }}
 {{- $saName := .Values.scheduler.serviceAccountName }}
-{{- $stateCmName := .Values.scheduler.stateConfigMapName }}
+{{- $stateCmName := printf "%s-state" .Release.Name }}
 ---
 apiVersion: v1
 kind: ServiceAccount

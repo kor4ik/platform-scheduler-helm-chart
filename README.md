@@ -31,7 +31,6 @@ helm install platform-scheduler platform-scheduler/platform-scheduler \
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `scheduler.serviceAccountName` | string | `platform-scheduler-sa` | Name of the ServiceAccount created and used by the CronJobs. |
-| `scheduler.stateConfigMapName` | string | `platform-state-cm` | ConfigMap used to persist replica counts between scale-down and scale-up. |
 | `scheduler.image.repository` | string | `bitnami/kubectl` | Image repository for CronJob containers. |
 | `scheduler.image.tag` | string | `1.30.13` | Pinned kubectl image tag. |
 | `scheduler.image.pullPolicy` | string | `IfNotPresent` | Image pull policy. |
@@ -50,7 +49,6 @@ helm install platform-scheduler platform-scheduler/platform-scheduler \
 ```yaml
 scheduler:
   serviceAccountName: platform-scheduler-sa
-  stateConfigMapName: platform-state-cm
   nodeSelector:
     agentpool: system
 
@@ -96,14 +94,14 @@ helm template test . -f values.yaml
 
 ## ArgoCD
 
-The state ConfigMap (`scheduler.stateConfigMapName`) is written to at runtime by the CronJobs. To prevent ArgoCD from marking the app as `OutOfSync` or overwriting live data, add `ignoreDifferences` to your ArgoCD `Application`:
+The state ConfigMap is named `<release-name>-state` (e.g. `platform-scheduler-state` when installed as `helm install platform-scheduler ...`). It is written to at runtime by the CronJobs. To prevent ArgoCD from marking the app as `OutOfSync` or overwriting live data, add `ignoreDifferences` to your ArgoCD `Application`:
 
 ```yaml
 spec:
   ignoreDifferences:
     - group: ""
       kind: ConfigMap
-      name: platform-state-cm   # must match global.stateConfigMapName
+      name: platform-scheduler-state   # <release-name>-state
       namespace: <release-namespace>
       jsonPointers:
         - /data
