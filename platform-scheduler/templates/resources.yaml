@@ -1,6 +1,6 @@
 {{- $ns := .Release.Namespace }}
-{{- $saName := .Values.global.serviceAccountName }}
-{{- $stateCmName := .Values.global.stateConfigMapName }}
+{{- $saName := .Values.scheduler.serviceAccountName }}
+{{- $stateCmName := .Values.scheduler.stateConfigMapName }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -47,4 +47,6 @@ kind: ConfigMap
 metadata:
   name: {{ $stateCmName }}
   namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=false
 data: {}

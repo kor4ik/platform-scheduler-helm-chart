@@ -30,12 +30,12 @@ helm install platform-scheduler platform-scheduler/platform-scheduler \
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `global.serviceAccountName` | string | `platform-scheduler-sa` | Name of the ServiceAccount created and used by the CronJobs. |
-| `global.stateConfigMapName` | string | `platform-state-cm` | ConfigMap used to persist replica counts between scale-down and scale-up. |
-| `global.image.repository` | string | `bitnami/kubectl` | Image repository for CronJob containers. |
-| `global.image.tag` | string | `1.30.13` | Pinned kubectl image tag. |
-| `global.image.pullPolicy` | string | `IfNotPresent` | Image pull policy. |
-| `global.nodeSelector` | object | `{}` | Optional node selector for CronJob pods. Omit to use default scheduling. |
+| `scheduler.serviceAccountName` | string | `platform-scheduler-sa` | Name of the ServiceAccount created and used by the CronJobs. |
+| `scheduler.stateConfigMapName` | string | `platform-state-cm` | ConfigMap used to persist replica counts between scale-down and scale-up. |
+| `scheduler.image.repository` | string | `bitnami/kubectl` | Image repository for CronJob containers. |
+| `scheduler.image.tag` | string | `1.30.13` | Pinned kubectl image tag. |
+| `scheduler.image.pullPolicy` | string | `IfNotPresent` | Image pull policy. |
+| `scheduler.nodeSelector` | object | `{}` | Optional node selector for CronJob pods. Omit to use default scheduling. |
 | `platformSchedule.enabled` | bool | `false` | Enables the scheduler CronJobs. |
 | `platformSchedule.start` | string | `""` | Scale-up cron expression. Empty keeps the scaleup CronJob suspended. |
 | `platformSchedule.end` | string | `""` | Scale-down cron expression. |
@@ -48,7 +48,7 @@ helm install platform-scheduler platform-scheduler/platform-scheduler \
 ## Example values
 
 ```yaml
-global:
+scheduler:
   serviceAccountName: platform-scheduler-sa
   stateConfigMapName: platform-state-cm
   nodeSelector:
@@ -93,3 +93,20 @@ helm template test . -f values.yaml
 - `platform-scaleup` is created in suspended state when `platformSchedule.start` is empty.
 - Replica counts and KEDA state are saved to the ConfigMap on scale-down and restored on scale-up.
 - RBAC is always created regardless of `platformSchedule.enabled` so pods are ready when the schedule fires.
+
+## ArgoCD
+
+The state ConfigMap (`scheduler.stateConfigMapName`) is written to at runtime by the CronJobs. To prevent ArgoCD from marking the app as `OutOfSync` or overwriting live data, add `ignoreDifferences` to your ArgoCD `Application`:
+
+```yaml
+spec:
+  ignoreDifferences:
+    - group: ""
+      kind: ConfigMap
+      name: platform-state-cm   # must match global.stateConfigMapName
+      namespace: <release-namespace>
+      jsonPointers:
+        - /data
+```
+
+The chart also sets `argocd.argoproj.io/sync-options: Replace=false` on the ConfigMap, but that only prevents ArgoCD from *deleting and recreating* the resource. Without `ignoreDifferences`, ArgoCD will still detect that the live `/data` (runtime replica counts) differs from the chart's `data: {}` and overwrite it back to empty on every sync. Both are required for full protection.

@@ -1,4 +1,4 @@
-{{- $global := .Values.global }}
+{{- $global := .Values.scheduler }}
 {{- $schedule := .Values.platformSchedule }}
 {{- $depSchedule := .Values.platformSchedule.dependencies | default dict }}
 {{- $appSchedule := .Values.platformSchedule.applications | default dict }}

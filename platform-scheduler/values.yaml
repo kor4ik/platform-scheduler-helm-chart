@@ -1,4 +1,4 @@
-global:
+scheduler:
   serviceAccountName: platform-scheduler-sa
   stateConfigMapName: platform-state-cm
   image:
