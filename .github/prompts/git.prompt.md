@@ -21,9 +21,10 @@ You are helping manage git operations for the `platform-scheduler` Helm chart re
 
 Commit all staged+unstaged changes.
 
-1. Run `git diff --stat` to show what will be committed.
-2. Ask for a commit message if not provided.
-3. Run `git add -A && git commit -m "<message>"`.
+1. Run `git diff --stat` to see what will be committed.
+2. Run `git diff` to read the actual changes.
+3. Construct a concise [Conventional Commits](https://www.conventionalcommits.org/) message from the diff (e.g. `fix: ...`, `feat: ...`, `chore: ...`). Do **not** ask the user for a message.
+4. Run `git add -A && git commit -m "<generated message>"`.
 
 ### `push`
 

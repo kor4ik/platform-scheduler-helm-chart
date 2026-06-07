@@ -2,6 +2,10 @@
 
 ## [1.0.7] - 2026-06-07
 ### Changed
+- test 001
+
+## [1.0.7] - 2026-06-07
+### Changed
 - Default image switched from `bitnami/kubectl` to `alpine/k8s` — Docker Hub no longer hosts new Bitnami kubectl tags.
 - Image is fully overridable via `scheduler.image.repository` / `scheduler.image.tag`.
 
