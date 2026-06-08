@@ -1,7 +1,7 @@
 ---
-description: "Git operations for platform-scheduler: commit, push, tag, or full release. Use when you want to commit changes, push to GitHub, create a version tag, or do a full release (bump version + update changelog + commit + push + tag)."
+description: "Git operations for platform-scheduler: commit, push, tag, or full release. Use when you want to commit changes, push to GitHub, create a version tag, or do a full release (default patch bump + changelog + commit + push + tag, or explicit version)."
 name: "Git"
-argument-hint: "commit | push | tag <version> | release <version> <summary>"
+argument-hint: "commit | push | tag <version> | release <summary> | release <version> <summary>"
 agent: "agent"
 tools: ["run_in_terminal", "read_file", "replace_string_in_file"]
 ---
@@ -39,21 +39,24 @@ Create and push a tag (e.g. `tag 1.0.8`).
 1. Verify `platform-scheduler/Chart.yaml` version matches `<version>`. If not, stop and warn.
 2. Run `git tag v<version> && git push origin v<version>`.
 
-### `release <version> <summary>`
+### `release <summary>` or `release <version> <summary>`
 
 Full release flow — use this when you have uncommitted changes ready to ship.
 
 1. Read current version from `platform-scheduler/Chart.yaml`.
-2. Update `version:` in `platform-scheduler/Chart.yaml` to `<version>`.
-3. Prepend a new entry to `.github/log/CHANGELOG.md`:
+2. Determine target version:
+   - If a `<version>` argument is provided, use it.
+   - Otherwise, compute patch bump from current chart version (`X.Y.Z` -> `X.Y.(Z+1)`), e.g. `1.0.7` -> `1.0.8`.
+3. Update `version:` in `platform-scheduler/Chart.yaml` to target version.
+4. Prepend a new entry to `.github/log/CHANGELOG.md`:
    ```
-   ## [<version>] - <today's date YYYY-MM-DD>
+   ## [<target-version>] - <today's date YYYY-MM-DD>
    ### Changed
    - <summary>
    ```
-4. Run `git diff --stat` and confirm files look correct.
-5. Run `git add -A && git commit -m "chore: release <version> — <summary>"`.
-6. Run `git tag v<version> && git push origin main v<version>`.
-7. Confirm: "Release v<version> pushed. The GitHub Actions workflow will publish it to the Helm repo."
+5. Run `git diff --stat` and confirm files look correct.
+6. Run `git add -A && git commit -m "chore: release <target-version> - <summary>"`.
+7. Run `git tag v<target-version> && git push origin main v<target-version>`.
+8. Confirm: "Release v<target-version> pushed. The GitHub Actions workflow will publish it to the Helm repo."
 
-If there are no uncommitted changes (clean working tree), skip steps 2–5 and only create and push the tag — but first verify Chart.yaml version matches `<version>`.
+If there are no uncommitted changes (clean working tree), skip steps 3–6 and only create and push the tag — but first verify `platform-scheduler/Chart.yaml` already matches the target version.
