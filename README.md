@@ -22,8 +22,7 @@ helm repo add platform-scheduler https://kor4ik.github.io/platform-scheduler-hel
 helm repo update
 helm install platform-scheduler platform-scheduler/platform-scheduler \
   --namespace platform-scheduler \
-  --create-namespace \
-  --set platformSchedule.enabled=true
+  --create-namespace
 ```
 
 ## Key values
@@ -35,7 +34,6 @@ helm install platform-scheduler platform-scheduler/platform-scheduler \
 | `scheduler.image.tag` | string | `latest` | Image tag. Should match your cluster's Kubernetes version. |
 | `scheduler.image.pullPolicy` | string | `IfNotPresent` | Image pull policy. |
 | `scheduler.nodeSelector` | object | `{}` | Optional node selector for CronJob pods. Omit to use default scheduling. |
-| `platformSchedule.enabled` | bool | `false` | Enables the scheduler CronJobs. |
 | `platformSchedule.start` | string | `""` | Scale-up cron expression. Empty keeps the scaleup CronJob suspended. |
 | `platformSchedule.end` | string | `""` | Scale-down cron expression. |
 | `platformSchedule.timezone` | string | `""` | Cron timezone; defaults to `Asia/Jerusalem`. |
@@ -53,7 +51,6 @@ scheduler:
     agentpool: system
 
 platformSchedule:
-  enabled: true
   timezone: UTC
   start: "0 7 * * 1-5"
   end: "0 20 * * 1-5"
@@ -90,7 +87,7 @@ helm template test . -f values.yaml
 
 - `platform-scaleup` is created in suspended state when `platformSchedule.start` is empty.
 - Replica counts and KEDA state are saved to the ConfigMap on scale-down and restored on scale-up.
-- RBAC is always created regardless of `platformSchedule.enabled` so pods are ready when the schedule fires.
+- RBAC is always created so pods are ready when the schedule fires.
 
 ## ArgoCD
 

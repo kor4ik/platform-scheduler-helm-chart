@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.0.8] - 2026-06-08
+### Changed
+- Remove unused platformSchedule.enabled value and docs references
+
 ## [1.0.7] - 2026-06-07
 ### Changed
 - test 001

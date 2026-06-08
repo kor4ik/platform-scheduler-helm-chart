@@ -6,7 +6,6 @@ scheduler:
     pullPolicy: IfNotPresent
 
 platformSchedule:
-  enabled: false
   timezone: ""
   start: ""
   end: ""
