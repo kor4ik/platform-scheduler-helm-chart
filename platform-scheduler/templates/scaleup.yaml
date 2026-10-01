@@ -81,6 +81,19 @@ spec:
                       log "INFO" "Scaled $STS in {{ .namespace }} to 1 (default)"
                     fi
                   done
+                  {{- if .waitForReady }}
+                  log "INFO" "Waiting for {{ .name | default .namespace }} in {{ .namespace }} before continuing (timeout 300s per resource)"
+                  for DEPLOY in $(kubectl -n {{ .namespace }} get deploy {{ if .labelSelector }}-l "{{ .labelSelector }}" {{ end }}-o name 2>/dev/null); do
+                    if ! kubectl -n {{ .namespace }} rollout status "$DEPLOY" --timeout=300s 2>/dev/null; then
+                      log "ERROR" "$DEPLOY in {{ .namespace }} did not become ready within 300s; continuing"
+                    fi
+                  done
+                  for STS in $(kubectl -n {{ .namespace }} get statefulset {{ if .labelSelector }}-l "{{ .labelSelector }}" {{ end }}-o name 2>/dev/null); do
+                    if ! kubectl -n {{ .namespace }} rollout status "$STS" --timeout=300s 2>/dev/null; then
+                      log "ERROR" "$STS in {{ .namespace }} did not become ready within 300s; continuing"
+                    fi
+                  done
+                  {{- end }}
                   {{- end }}
 
                   # === Phase 2: Wait for platform dependencies to become ready ===

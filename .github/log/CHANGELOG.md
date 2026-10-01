@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.9] - 2026-10-01
+### Added
+- `scheduler.namespace.create` / `scheduler.namespace.labels`: optionally render the release Namespace with labels. Default labels carry `config.linkerd.io/admission-webhooks: disabled` so the scheduler pods are never intercepted by the Linkerd proxy-injector webhook. Without this, scaling down Linkerd or cert-manager (which injects the webhook caBundle) makes every later scaleup Job fail with `failed calling webhook linkerd-proxy-injector` and the environment cannot recover on its own.
+- `platformSchedule.dependencies.apps[].waitForReady`: when true, scaleup waits for that dependency's rollout before scaling the next one. Use it on cert-manager so cainjector is back before Linkerd and the rest start.
+
 ## [1.0.8] - 2026-06-08
 ### Changed
 - Remove unused platformSchedule.enabled value and docs references

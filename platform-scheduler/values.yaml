@@ -4,6 +4,10 @@ scheduler:
     repository: bitnami/kubectl
     tag: "latest"
     pullPolicy: IfNotPresent
+  namespace:
+    create: false
+    labels:
+      config.linkerd.io/admission-webhooks: disabled
 
 platformSchedule:
   timezone: ""

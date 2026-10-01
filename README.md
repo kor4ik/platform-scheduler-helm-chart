@@ -34,11 +34,14 @@ helm install platform-scheduler platform-scheduler/platform-scheduler \
 | `scheduler.image.tag` | string | `latest` | Image tag. Should match your cluster's Kubernetes version. |
 | `scheduler.image.pullPolicy` | string | `IfNotPresent` | Image pull policy. |
 | `scheduler.nodeSelector` | object | `{}` | Optional node selector for CronJob pods. Omit to use default scheduling. |
+| `scheduler.namespace.create` | bool | `false` | Render the release Namespace so labels can be managed by the chart. Do not combine with `helm install --create-namespace`; fine with ArgoCD `CreateNamespace=true`. |
+| `scheduler.namespace.labels` | object | `config.linkerd.io/admission-webhooks: disabled` | Labels for the rendered Namespace. The default keeps the Linkerd proxy-injector webhook away from the scheduler pods (see Admission webhooks). |
 | `platformSchedule.start` | string | `""` | Scale-up cron expression. Empty keeps the scaleup CronJob suspended. |
 | `platformSchedule.end` | string | `""` | Scale-down cron expression. |
 | `platformSchedule.timezone` | string | `""` | Cron timezone; defaults to `Asia/Jerusalem`. |
 | `platformSchedule.dependencies.enabled` | bool | `false` | Enables scale-down/up of dependency namespaces. |
-| `platformSchedule.dependencies.apps` | list | `[]` | List of `{namespace, labelSelector}` pairs for dependency workloads. |
+| `platformSchedule.dependencies.apps` | list | `[]` | Ordered list of `{name, namespace, labelSelector, waitForReady}` entries for dependency workloads. Scaleup processes them in list order. |
+| `platformSchedule.dependencies.apps[].waitForReady` | bool | `false` | Wait for this dependency's rollout before scaling the next entry. Set on cert-manager (or anything that feeds admission webhooks) so later dependencies start against a working webhook chain. |
 | `platformSchedule.applications.enabled` | bool | `false` | Enables scale-down/up of application namespaces. |
 | `platformSchedule.applications.namespace` | string | `""` | Target application namespace. |
 
@@ -88,6 +91,26 @@ helm template test . -f values.yaml
 - `platform-scaleup` is created in suspended state when `platformSchedule.start` is empty.
 - Replica counts and KEDA state are saved to the ConfigMap on scale-down and restored on scale-up.
 - RBAC is always created so pods are ready when the schedule fires.
+
+## Admission webhooks
+
+The scaleup Job is a plain pod created in the release namespace. If a mutating webhook with `failurePolicy: Fail` targets that namespace and its backend is one of the workloads this chart scales down, the Job can never start and the environment is stuck at zero. Linkerd is the common case: `linkerd-proxy-injector` is scaled down by the chart, and its webhook `caBundle` is maintained by cert-manager's cainjector, which is also scaled down. Linkerd skips namespaces labelled `config.linkerd.io/admission-webhooks: disabled`, so either set `scheduler.namespace.create: true` (the default labels include it) or put the label on the namespace yourself, e.g. with ArgoCD `managedNamespaceMetadata`.
+
+Order dependencies so that webhook backends come first, and gate on them with `waitForReady`:
+
+```yaml
+platformSchedule:
+  dependencies:
+    enabled: true
+    apps:
+      - name: cert-manager
+        namespace: cert-manager
+        waitForReady: true
+      - name: dapr
+        namespace: dapr-system
+      - name: linkerd
+        namespace: linkerd
+```
 
 ## ArgoCD
 
