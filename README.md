@@ -89,7 +89,7 @@ helm template test . -f values.yaml
 ## Notes
 
 - `platform-scaleup` is created in suspended state when `platformSchedule.start` is empty.
-- Replica counts and KEDA state are saved to the ConfigMap on scale-down and restored on scale-up.
+- Replica counts and KEDA state are saved to the ConfigMap on scale-down and restored on scale-up. Each scale-down rewrites the ConfigMap data with the state it observed; keys of objects that were removed or whose minimum is 0 again are dropped, and objects found already shut down keep their saved value.
 - RBAC is always created so pods are ready when the schedule fires.
 
 ## Admission webhooks

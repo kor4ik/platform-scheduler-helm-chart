@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.10] - 2026-11-02
+### Fixed
+- `platform-scaledown` now replaces the `data` of the state ConfigMap with what the run observed instead of merge-patching keys into it. The merge patch only added or overwrote keys, so a ScaledJob whose `minReplicaCount` was lowered to 0 in git kept the non-zero value saved on an earlier night and every scaleup restored it (seen with `homelander-runner` on five dev clusters; ArgoCD cannot correct it because `/spec/minReplicaCount` is ignored there). Keys for objects that no longer exist are dropped the same way. Objects the run finds already shut down (replicas 0, suspended, paused with `minReplicaCount` 0) carry their saved value forward, so a scaledown on an environment that is already down, which happens when `platformSchedule.start` is empty and nobody scaled up that day, no longer risks losing state. `platform-scaleup` is unchanged: a missing `sjmr_` key still means nothing to restore.
+- An unset `minReplicaCount` is no longer saved as an empty value.
+
 ## [1.0.9] - 2026-10-01
 ### Added
 - `scheduler.namespace.create` / `scheduler.namespace.labels`: optionally render the release Namespace with labels. Default labels carry `config.linkerd.io/admission-webhooks: disabled` so the scheduler pods are never intercepted by the Linkerd proxy-injector webhook. Without this, scaling down Linkerd or cert-manager (which injects the webhook caBundle) makes every later scaleup Job fail with `failed calling webhook linkerd-proxy-injector` and the environment cannot recover on its own.
