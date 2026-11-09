@@ -44,6 +44,9 @@ helm install platform-scheduler platform-scheduler/platform-scheduler \
 | `platformSchedule.dependencies.apps[].waitForReady` | bool | `false` | Wait for this dependency's rollout before scaling the next entry. Set on cert-manager (or anything that feeds admission webhooks) so later dependencies start against a working webhook chain. |
 | `platformSchedule.applications.enabled` | bool | `false` | Enables scale-down/up of application namespaces. |
 | `platformSchedule.applications.namespace` | string | `""` | Target application namespace. |
+| `platformSchedule.karpenterSweep.enabled` | bool | `false` | After everything is scaled down, remove Karpenter nodes (label `karpenter.sh/nodepool`) whose only non-DaemonSet pods are in `addonNamespaces`. A node is deleted through its NodeClaim; the node running the scale-down job is cordoned and drained of its add-on pods instead and left for Karpenter to remove once empty. A node or pod with `karpenter.sh/do-not-disrupt: "true"` is never touched. Nodes still holding other pods are re-checked every 15s until `timeoutSeconds`. |
+| `platformSchedule.karpenterSweep.addonNamespaces` | list | `[kube-system, gatekeeper-system]` | Namespaces whose pods do not keep a Karpenter node alive at night (AKS add-ons such as coredns, metrics-server, konnectivity-agent and Azure Policy gatekeeper). |
+| `platformSchedule.karpenterSweep.timeoutSeconds` | int | `900` | How long the sweep waits for application pods to finish terminating before it leaves the remaining nodes to Karpenter. |
 
 ## Example values
 

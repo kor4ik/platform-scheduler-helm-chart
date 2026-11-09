@@ -19,3 +19,9 @@ platformSchedule:
   applications:
     enabled: false
     namespaces: []
+  karpenterSweep:
+    enabled: false
+    addonNamespaces:
+      - kube-system
+      - gatekeeper-system
+    timeoutSeconds: 900

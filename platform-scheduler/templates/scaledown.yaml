@@ -11,6 +11,10 @@
 {{- $saName := $global.serviceAccountName }}
 {{- $apps := $depSchedule.apps | default list }}
 {{- $stateCmName := printf "%s-state" .Release.Name }}
+{{- $sweep := .Values.platformSchedule.karpenterSweep | default dict }}
+{{- $sweepEnabled := $sweep.enabled | default false }}
+{{- $sweepNamespaces := $sweep.addonNamespaces | default (list "kube-system" "gatekeeper-system") }}
+{{- $sweepTimeout := $sweep.timeoutSeconds | default 900 | int }}
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -230,6 +234,87 @@ spec:
                   else
                     log "INFO" "No state captured; keeping existing ConfigMap data as-is"
                   fi
+
+                  {{- if $sweepEnabled }}
+
+                  # === Karpenter sweep: remove nodes held only by add-on pods ===
+                  ADDON_NS="{{ join " " $sweepNamespaces }}"
+                  log "INFO" "Karpenter sweep: removing nodes whose only non-DaemonSet pods are in: $ADDON_NS"
+                  SELF_NODE=$(kubectl -n {{ $ns }} get pod "$HOSTNAME" -o jsonpath='{.spec.nodeName}' 2>/dev/null || true)
+                  REMAINING=$(kubectl get nodes -l karpenter.sh/nodepool -o jsonpath='{range .items[*]}{.metadata.name}{" "}{end}' 2>/dev/null || true)
+                  SWEEP_ELAPSED=0
+                  while [ -n "$(echo "$REMAINING" | tr -d ' ')" ]; do
+                    NEXT=""
+                    for NODE in $REMAINING; do
+                      if ! kubectl get node "$NODE" >/dev/null 2>&1; then
+                        log "INFO" "Sweep: node $NODE is gone"
+                        continue
+                      fi
+                      NODE_DND=$(kubectl get node "$NODE" -o jsonpath='{.metadata.annotations.karpenter\.sh/do-not-disrupt}' 2>/dev/null || true)
+                      if [ "$NODE_DND" = "true" ]; then
+                        log "INFO" "Sweep: skipping node $NODE (node has karpenter.sh/do-not-disrupt)"
+                        continue
+                      fi
+                      if ! PODS=$(kubectl get pods -A --field-selector "spec.nodeName=$NODE,status.phase!=Succeeded,status.phase!=Failed" -o jsonpath='{range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"|"}{.metadata.ownerReferences[0].kind}{"|"}{.metadata.annotations.karpenter\.sh/do-not-disrupt}{"\n"}{end}' 2>/dev/null); then
+                        NEXT="$NEXT $NODE"
+                        continue
+                      fi
+                      BLOCK=""
+                      OTHER=""
+                      ADDONS=""
+                      for LINE in $PODS; do
+                        P_NS=${LINE%%|*}
+                        REST=${LINE#*|}
+                        P_NAME=${REST%%|*}
+                        REST=${REST#*|}
+                        P_KIND=${REST%%|*}
+                        P_DND=${REST#*|}
+                        [ "$P_KIND" = "DaemonSet" ] && continue
+                        if [ "$P_NS" = "{{ $ns }}" ] && [ "$P_NAME" = "$HOSTNAME" ]; then
+                          continue
+                        fi
+                        if [ "$P_DND" = "true" ]; then
+                          BLOCK="$BLOCK $P_NS/$P_NAME"
+                          continue
+                        fi
+                        case " $ADDON_NS " in
+                          *" $P_NS "*) ADDONS="$ADDONS $P_NS/$P_NAME" ;;
+                          *) OTHER="$OTHER $P_NS/$P_NAME" ;;
+                        esac
+                      done
+                      if [ -n "$BLOCK" ]; then
+                        log "INFO" "Sweep: skipping node $NODE (do-not-disrupt pods:$BLOCK)"
+                      elif [ -n "$OTHER" ]; then
+                        NEXT="$NEXT $NODE"
+                      elif [ "$NODE" = "$SELF_NODE" ]; then
+                        log "INFO" "Sweep: node $NODE runs this job; cordoning and evicting add-on pods:${ADDONS:- none}"
+                        if kubectl drain "$NODE" --ignore-daemonsets --delete-emptydir-data --pod-selector='!batch.kubernetes.io/job-name' --timeout=120s >/dev/null 2>&1; then
+                          log "INFO" "Sweep: drained $NODE; Karpenter removes it once this job ends"
+                        else
+                          kubectl uncordon "$NODE" >/dev/null 2>&1 || true
+                          log "WARNING" "Sweep: drain of $NODE failed; node uncordoned and left in place"
+                        fi
+                      else
+                        NODECLAIM=$(kubectl get nodeclaims -o jsonpath="{range .items[?(@.status.nodeName=='$NODE')]}{.metadata.name}{end}" 2>/dev/null || true)
+                        if [ -n "$NODECLAIM" ]; then
+                          kubectl delete nodeclaim "$NODECLAIM" --wait=false >/dev/null
+                          log "INFO" "Sweep: deleted nodeclaim/$NODECLAIM (node $NODE, add-on pods:${ADDONS:- none})"
+                        else
+                          log "WARNING" "Sweep: no nodeclaim found for node $NODE; left in place"
+                        fi
+                      fi
+                    done
+                    REMAINING="$NEXT"
+                    [ -z "$(echo "$REMAINING" | tr -d ' ')" ] && break
+                    if [ "$SWEEP_ELAPSED" -ge {{ $sweepTimeout }} ]; then
+                      log "WARNING" "Sweep: nodes still holding workloads after {{ $sweepTimeout }}s, left to Karpenter:$REMAINING"
+                      break
+                    fi
+                    sleep 15
+                    SWEEP_ELAPSED=$((SWEEP_ELAPSED + 15))
+                  done
+                  log "INFO" "Karpenter sweep complete"
+                  {{- end }}
 
                   log "INFO" "Platform shutdown complete. Karpenter will consolidate empty nodes."
 

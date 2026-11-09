@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.0.12] - 2026-11-09
+### Added
+- `platformSchedule.karpenterSweep` (off by default): a last step of `platform-scaledown` that removes Karpenter nodes whose only non-DaemonSet pods are AKS add-ons (`addonNamespaces`, default `kube-system` and `gatekeeper-system`). Karpenter itself keeps such nodes: on sreming the second Azure Policy gatekeeper replica prefers a node apart from the first one, so consolidation reported "Can't replace with a cheaper node" and a platform node ran all night. Other nodes are deleted through their NodeClaim (Karpenter drains them, PDBs apply); the node running the job is cordoned and drained of its add-on pods with `kubectl drain` (eviction API) and Karpenter removes it once the job has finished. Nodes or pods annotated `karpenter.sh/do-not-disrupt: "true"` are skipped. Nodes still holding application pods are re-checked every 15s until `timeoutSeconds` (default 900). The ClusterRole gains nodes get/list/patch, pods get/list, pods/eviction create, daemonsets get and `karpenter.sh/nodeclaims` get/list/delete only when the sweep is enabled.
+
 ## [1.0.11] - 2026-11-09
 ### Fixed
 - `platform-scaledown` now pauses every KEDA ScaledObject in the application namespaces with `autoscaling.keda.sh/paused-replicas: "0"`, waits up to 60s for KEDA to report it `Paused`, and then scales back to 0 any Deployment that an autoscaler raised again. Before, only ScaledJobs were paused: applications were scaled to 0 while the KEDA operator was still running, so a ScaledObject with `minReplicaCount: 0` and an active trigger (a Service Bus backlog) activated its Deployment from 0 to 1 again before KEDA itself was scaled down, and the Deployment stayed at 1 all night (seen with `ask-mia-indexer` on misquad01). ScaledObjects that were already paused are left alone and carry their saved state forward.
