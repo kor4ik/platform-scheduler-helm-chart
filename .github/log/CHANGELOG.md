@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.11] - 2026-11-09
+### Fixed
+- `platform-scaledown` now pauses every KEDA ScaledObject in the application namespaces with `autoscaling.keda.sh/paused-replicas: "0"`, waits up to 60s for KEDA to report it `Paused`, and then scales back to 0 any Deployment that an autoscaler raised again. Before, only ScaledJobs were paused: applications were scaled to 0 while the KEDA operator was still running, so a ScaledObject with `minReplicaCount: 0` and an active trigger (a Service Bus backlog) activated its Deployment from 0 to 1 again before KEDA itself was scaled down, and the Deployment stayed at 1 all night (seen with `ask-mia-indexer` on misquad01). ScaledObjects that were already paused are left alone and carry their saved state forward.
+- `platform-scaleup` removes the annotation only from ScaledObjects that scaledown paused (`<ns>_sop_<name>` in the state ConfigMap), after the Deployments are restored.
+- ClusterRole: `get`/`list`/`patch` on `keda.sh/scaledobjects`.
+
 ## [1.0.10] - 2026-11-02
 ### Fixed
 - `platform-scaledown` now replaces the `data` of the state ConfigMap with what the run observed instead of merge-patching keys into it. The merge patch only added or overwrote keys, so a ScaledJob whose `minReplicaCount` was lowered to 0 in git kept the non-zero value saved on an earlier night and every scaleup restored it (seen with `homelander-runner` on five dev clusters; ArgoCD cannot correct it because `/spec/minReplicaCount` is ignored there). Keys for objects that no longer exist are dropped the same way. Objects the run finds already shut down (replicas 0, suspended, paused with `minReplicaCount` 0) carry their saved value forward, so a scaledown on an environment that is already down, which happens when `platformSchedule.start` is empty and nobody scaled up that day, no longer risks losing state. `platform-scaleup` is unchanged: a missing `sjmr_` key still means nothing to restore.

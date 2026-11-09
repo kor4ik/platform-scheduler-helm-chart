@@ -212,6 +212,20 @@ spec:
                     kubectl -n {{ . }} annotate "$SJ" autoscaling.keda.sh/paused="false" --overwrite
                     log "INFO" "Unpaused $SJ in {{ . }}"
                   done
+
+                  # === Phase 8: Unpause ScaledObjects paused by scaledown ===
+                  log "INFO" "Unpausing ScaledObjects paused by scaledown in {{ . }}"
+                  for SO in $(kubectl -n {{ . }} get scaledobject -o name 2>/dev/null); do
+                    NAME=$(echo "$SO" | cut -d/ -f2)
+                    PAUSED_BY_US=$(kubectl -n {{ $ns }} get configmap {{ $stateCmName }} \
+                      -o jsonpath="{.data['{{ . }}_sop_${NAME}']}" 2>/dev/null)
+                    if [ "$PAUSED_BY_US" = "true" ]; then
+                      kubectl -n {{ . }} annotate "$SO" autoscaling.keda.sh/paused-replicas-
+                      log "INFO" "Unpaused $SO in {{ . }}"
+                    else
+                      log "INFO" "Skipping $SO in {{ . }} (not paused by scaledown)"
+                    fi
+                  done
                   {{- end }}
                   {{- end }}
 

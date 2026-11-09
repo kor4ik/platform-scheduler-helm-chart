@@ -131,6 +131,41 @@ spec:
                       log "INFO" "Paused $SJ in {{ . }}"
                     fi
                   done
+
+                  # === Applications: pause ScaledObjects at 0 replicas while KEDA still runs ===
+                  log "INFO" "Pausing ScaledObjects in {{ . }} at 0 replicas"
+                  PAUSED_SO=""
+                  for SO in $(kubectl -n {{ . }} get scaledobject -o name 2>/dev/null); do
+                    NAME=$(echo "$SO" | cut -d/ -f2)
+                    PAUSED_REPLICAS=$(kubectl -n {{ . }} get "$SO" -o jsonpath='{.metadata.annotations["autoscaling.keda.sh/paused-replicas"]}' 2>/dev/null | tr -d '\r[:space:]')
+                    WAS_PAUSED=$(kubectl -n {{ . }} get "$SO" -o jsonpath='{.metadata.annotations["autoscaling.keda.sh/paused"]}' 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -d '\r[:space:]')
+                    if [ -n "$PAUSED_REPLICAS" ] || [ "$WAS_PAUSED" = "true" ]; then
+                      keep_state "{{ . }}_sop_${NAME}"
+                      log "INFO" "Skipping $SO in {{ . }} (already paused)"
+                    else
+                      PATCH_DATA="${PATCH_DATA}\"{{ . }}_sop_${NAME}\":\"true\","
+                      kubectl -n {{ . }} annotate "$SO" autoscaling.keda.sh/paused-replicas="0" --overwrite
+                      PAUSED_SO="$PAUSED_SO $NAME"
+                      log "INFO" "Paused $SO in {{ . }} at 0 replicas"
+                    fi
+                  done
+                  for NAME in $PAUSED_SO; do
+                    WAITED=0
+                    until [ "$(kubectl -n {{ . }} get scaledobject "$NAME" -o jsonpath='{.status.conditions[?(@.type=="Paused")].status}' 2>/dev/null)" = "True" ]; do
+                      if [ "$WAITED" -ge 60 ]; then
+                        log "WARNING" "scaledobject/$NAME in {{ . }} not reported Paused by KEDA after 60s; continuing"
+                        break
+                      fi
+                      sleep 2
+                      WAITED=$((WAITED + 2))
+                    done
+                  done
+                  for DEPLOY in $(kubectl -n {{ . }} get deploy -o name 2>/dev/null); do
+                    if [ "$(kubectl -n {{ . }} get "$DEPLOY" -o jsonpath='{.spec.replicas}')" != "0" ]; then
+                      kubectl -n {{ . }} scale "$DEPLOY" --replicas=0
+                      log "INFO" "Scaled $DEPLOY in {{ . }} back to 0 (raised by an autoscaler during shutdown)"
+                    fi
+                  done
                   {{- end }}
                   {{- else }}
                   log "INFO" "Applications block disabled; skipping app workload shutdown"

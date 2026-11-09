@@ -35,7 +35,7 @@ rules:
     resources: ["cronjobs"]
     verbs: ["get", "list", "patch"]
   - apiGroups: ["keda.sh"]
-    resources: ["scaledjobs"]
+    resources: ["scaledjobs", "scaledobjects"]
     verbs: ["get", "list", "patch"]
   - apiGroups: [""]
     resources: ["configmaps"]

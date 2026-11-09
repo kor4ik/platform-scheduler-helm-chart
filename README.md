@@ -6,14 +6,14 @@
 
 - Scales down and up entire environments on a cron schedule.
 - Supports on-demand execution by triggering the CronJob manually (`kubectl create job --from=cronjob/platform-scaledown`).
-- Saves state for all resources (Deployments, StatefulSets, CronJobs, KEDA ScaledJobs) before scale-down.
+- Saves state for all resources (Deployments, StatefulSets, CronJobs, KEDA ScaledJobs and ScaledObjects) before scale-down.
 - Restores exact previous replica counts on scale-up, with dependency-first ordering and readiness gates.
 
 ## Prerequisites
 
 - Kubernetes cluster with CronJob support (`batch/v1`).
 - RBAC resources (ServiceAccount, ClusterRole, ClusterRoleBinding) are created by this chart.
-- Optional: KEDA CRDs if you use ScaledJobs.
+- Optional: KEDA CRDs if you use ScaledJobs or ScaledObjects.
 
 ## Install
 
